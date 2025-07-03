@@ -12,7 +12,6 @@ from src import serverinfo
 from src.web import search
 from src.crawler import Crawler
 
-
 # search engine instance
 bing   = search.Bing()
 google = search.Google()
@@ -20,7 +19,6 @@ yahoo = search.Yahoo()
 
 # crawler instance
 crawler = Crawler()
-
 
 def singlescan(url):
     """instance to scan single targeted domain"""
@@ -59,7 +57,6 @@ def singlescan(url):
 
     return vulnerables
 
-
 def initparser():
     """initialize parser arguments"""
 
@@ -71,13 +68,40 @@ def initparser():
     parser.add_argument("-t", dest="target", help="scan target website", type=str, metavar="www.example.com")
     parser.add_argument('-r', dest="reverse", help="reverse domain", action='store_true')
     parser.add_argument('-o', dest="output", help="output result into json", type=str, metavar="result.json")
-
+    parser.add_argument('--dorks-file', dest="dorks_file", help="File with dorks, one per line", type=str)
 
 if __name__ == "__main__":
     initparser()
     args = parser.parse_args()
 
-    # find random SQLi by dork
+    vulnerableurls = []
+
+    # Multiple dork support
+    if args.dorks_file:
+        std.stdout("reading dorks from file: {}".format(args.dorks_file))
+        with open(args.dorks_file, "r") as f:
+            dorks = [line.strip() for line in f if line.strip()]
+        for dork in dorks:
+            std.stdout("searching for websites with dork: {}".format(dork))
+            if args.engine in ["bing", "google", "yahoo"]:
+                websites = eval(args.engine).search(dork, args.page)
+            else:
+                std.stdout("unsupported search engine: {}".format(args.engine))
+                continue
+            vulnerables = scanner.scan(websites)
+            if vulnerables:
+                vulnerableurls.extend([result[0] for result in vulnerables])
+        # Output to vulnerable.txt
+        with open("vulnerable.txt", "w") as fout:
+            for url in vulnerableurls:
+                fout.write(url + "\n")
+        if vulnerableurls:
+            std.stdout("Vulnerable targets written to vulnerable.txt")
+        else:
+            std.stdout("No vulnerable targets found.")
+        exit(0)
+
+    # Single dork mode
     if args.dork != None and args.engine != None:
         std.stdout("searching for websites with given dork")
 
@@ -85,81 +109,26 @@ if __name__ == "__main__":
         if args.engine in ["bing", "google", "yahoo"]:
             websites = eval(args.engine).search(args.dork, args.page)
         else:
-            std.stderr("invalid search engine")
+            std.stdout("unsupported search engine: {}".format(args.engine))
             exit(1)
 
-        std.stdout("{} websites found".format(len(websites)))
-
         vulnerables = scanner.scan(websites)
-
-        if not vulnerables:
-            std.stdout("you can still scan those websites by crawling or reverse domain.")
-            option = std.stdin("do you want save search result? [Y/N]", ["Y", "N"], upper=True)
-
-            if option == 'Y':
-                std.stdout("saved as searches.txt")
-                std.dump(websites, "searches.txt")
-
-            exit(0)
-
-        std.stdout("scanning server information")
-
         vulnerableurls = [result[0] for result in vulnerables]
-        table_data = serverinfo.check(vulnerableurls)
-        # add db name to info
-        for result, info in zip(vulnerables, table_data):
-            info.insert(1, result[1])  # database name
-
-        std.fullprint(table_data)
-
-
-    # do reverse domain of given site
-    elif args.target != None and args.reverse:
-        std.stdout("finding domains with same server as {}".format(args.target))
-        domains = reverseip.reverseip(args.target)
-
-        if domains == []:
-            std.stdout("no domain found with reversing ip")
-            exit(0)
-
-        # if there are domains
-        std.stdout("found {} websites".format(len(domains)))
-
-        # ask whether user wants to save domains
-        std.stdout("scanning multiple websites with crawling will take long")
-        option = std.stdin("do you want save domains? [Y/N]", ["Y", "N"], upper=True)
-
-        if option == 'Y':
-            std.stdout("saved as domains.txt")
-            std.dump(domains, "domains.txt")
-
-        # ask whether user wants to crawl one by one or exit
-        option = std.stdin("do you want start crawling? [Y/N]", ["Y", "N"], upper=True)
-
-        if option == 'N':
-            exit(0)
-
-        vulnerables = []
-        for domain in domains:
-            vulnerables_temp = singlescan(domain)
-            if vulnerables_temp:
-                vulnerables += vulnerables_temp
-
-        std.stdout("finished scanning all reverse domains")
-        if vulnerables == []:
-            std.stdout("no vulnerables webistes from reverse domains")
-            exit(0)
-
-        std.stdout("scanning server information")
-
-        vulnerableurls = [result[0] for result in vulnerables]
-        table_data = serverinfo.check(vulnerableurls)
-        # add db name to info
-        for result, info in zip(vulnerables, table_data):
-            info.insert(1, result[1])  # database name
-
-        std.fullprint(table_data)
-
+        # add server info
+        if vulnerables:
+            table_data = serverinfo.check(vulnerableurls)
+            for result, info in zip(vulnerables, table_data):
+                info.insert(1, result[1])  # database name
+            std.fullprint(table_data)
+        # Output to vulnerable.txt
+        with open("vulnerable.txt", "w") as fout:
+            for url in vulnerableurls:
+                fout.write(url + "\n")
+        if vulnerableurls:
+            std.stdout("Vulnerable targets written to vulnerable.txt")
+        else:
+            std.stdout("No vulnerable targets found.")
+        exit(0)
 
     # scan SQLi of given site
     elif args.target:
@@ -175,6 +144,14 @@ if __name__ == "__main__":
         std.printserverinfo(table_data)
         print ""  # give space between two table
         std.normalprint(vulnerables)
+        # Output to vulnerable.txt
+        with open("vulnerable.txt", "w") as fout:
+            for result in vulnerables:
+                if isinstance(result, (list, tuple)):
+                    fout.write(result[0] + "\n")
+                else:
+                    fout.write(str(result) + "\n")
+        std.stdout("Vulnerable targets written to vulnerable.txt")
         exit(0)
 
     # print help message, if no parameter is provided
@@ -183,6 +160,4 @@ if __name__ == "__main__":
 
     # dump result into json if specified
     if args.output != None:
-        std.dumpjson(table_data, args.output)
-        std.stdout("Dumped result into %s" % args.output)
-
+        std.dumpjson(vulnerables, args.output)
